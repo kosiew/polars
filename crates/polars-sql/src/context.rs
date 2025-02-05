@@ -1431,40 +1431,21 @@ fn unalias<'a>(expr: &'a Expr) -> &'a Expr {
     }
 }
 
-fn check_non_literal_expr(e: &Expr) -> bool {
-    let e_unwrapped = unalias(e);
-    let is_agg = matches!(e_unwrapped, Expr::Agg(_));
-    let is_window = matches!(e_unwrapped, Expr::Window { .. });
-    let is_lenchanging = matches!(e_unwrapped, Expr::Function { options, .. }
-        if options.flags.contains(FunctionFlags::CHANGES_LENGTH));
-    is_agg || is_window || is_lenchanging
-}
-
-fn check_literal_expr(p_unwrapped: &Expr) -> bool {
-    let has_no_columns = expr_to_leaf_column_names_iter(p_unwrapped).next().is_none();
-    let is_pure_literal = !has_expr(p_unwrapped, check_non_literal_expr);
-
-    has_no_columns && is_pure_literal
-}
-
 fn is_literal_expression(expr: &Expr) -> bool {
     let p_unwrapped = unalias(expr);
 
-    match p_unwrapped {
-        Expr::Agg(_) => false,
-        Expr::Len => false,
+    let contains_no_column_refs = expr_to_leaf_column_names_iter(p_unwrapped).next().is_none();
+    let contains_only_simple_literals = has_expr(p_unwrapped, |e| match e {
+        Expr::Agg(_) | Expr::Len | Expr::Window { .. } => false,
         Expr::Function { options, .. } => {
-            if !options.flags.contains(FunctionFlags::RETURNS_SCALAR)
+            options.flags.contains(FunctionFlags::CHANGES_LENGTH)
+                && !options.flags.contains(FunctionFlags::RETURNS_SCALAR)
                 && !options.is_elementwise()
-                && options.flags.contains(FunctionFlags::CHANGES_LENGTH)
-            {
-                false
-            } else {
-                check_literal_expr(p_unwrapped)
-            }
         },
-        _ => check_literal_expr(p_unwrapped),
-    }
+        _ => true,
+    });
+
+    contains_no_column_refs && contains_only_simple_literals
 }
 
 fn collect_compound_identifiers(
